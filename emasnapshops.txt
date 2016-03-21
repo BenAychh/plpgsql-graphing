@@ -1,0 +1,30 @@
+CREATE OR REPLACE FUNCTION emasnapshots(
+    ptable character varying,
+    timestart timestamp with time zone,
+    timeend timestamp with time zone,
+    duration double precision,
+    psymbol character varying,
+    alpha double precision)
+  RETURNS SETOF timevalue AS
+$BODY$
+	DECLARE
+		localstart timestamptz;
+		localend timestamptz;
+		timevalues timevalue%rowtype;
+		groups int := ceil((SELECT EXTRACT(EPOCH FROM (timeend - timestart))) / duration);
+	BEGIN
+		EXECUTE 'CREATE TEMP TABLE allemas ON COMMIT DROP AS select date_trunc(''second'', datetime) as datetime, ema(value, ' || quote_literal(alpha) || ') over (order by datetime asc) from ' || quote_ident(ptable) || ' where symbol = ' || quote_literal(psymbol) || ' and datetime >= ' || quote_literal(timestart) || ' and datetime <= ' || quote_literal(timeend);
+		FOR i in 1 .. groups LOOP
+			localStart := timestart + (duration * (i - 1) * interval '1 second');
+			localEnd := timestart + (duration * i * interval '1 second');
+			EXECUTE 'select * from allemas where datetime >= ' || quote_literal(localstart) || ' and datetime <= ' || quote_literal(localend) || ' order by datetime desc limit 1' into timevalues;
+			return next timevalues;
+		end loop;
+	return;
+	END
+$BODY$
+  LANGUAGE plpgsql VOLATILE
+  COST 100
+  ROWS 1000;
+ALTER FUNCTION emasnapshots(character varying, timestamp with time zone, timestamp with time zone, double precision, character varying, double precision)
+  OWNER TO postgres;
