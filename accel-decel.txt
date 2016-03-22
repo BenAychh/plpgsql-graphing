@@ -1,0 +1,29 @@
+CREATE OR REPLACE FUNCTION getacceldecel(
+    pstarttime timestamp with time zone,
+    pendtime timestamp with time zone,
+    psymbol character varying,
+    pcandlewidth integer)
+  RETURNS SETOF acceldecel AS
+$BODY$
+	declare
+		acceldecels acceldecel%rowtype;
+		rowdata record;
+	begin
+		EXECUTE 'CREATE TEMP TABLE tempCandles ON COMMIT DROP AS
+			select start,
+				avg((high + low) / 2) over(order by start ROWS between 4 preceding and current row) - avg((high + low) / 2) over(order by start ROWS between 33 preceding and current row) as ao
+				from getcandles($1, $2, $3, $4)
+				order by start;' USING pstarttime, pendtime, psymbol, pcandlewidth;
+		for rowdata in select start, ao, avg(ao) over (order by start rows between 4 preceding and current row) as smaao5 from tempCandles order by start asc LOOP
+			acceldecels.datetime := rowdata.start;
+			acceldecels.ac := rowdata.ao - rowdata.smaao5;
+			return next acceldecels;
+		END LOOP;
+	return;
+	end;
+$BODY$
+  LANGUAGE plpgsql VOLATILE
+  COST 100
+  ROWS 1000;
+ALTER FUNCTION getacceldecel(timestamp with time zone, timestamp with time zone, character varying, integer)
+  OWNER TO postgres;
