@@ -1,0 +1,44 @@
+CREATE OR REPLACE FUNCTION getaverage(
+    starttime timestamp with time zone,
+    endtime timestamp with time zone,
+    psymbol character varying)
+  RETURNS timevalue AS
+$BODY$
+	select
+		startTime::timestamptz(0),
+		(select avg(value) average FROM "4" WHERE datetime >= startTime and datetime <= endTime and symbol = pSymbol); $BODY$
+  LANGUAGE sql VOLATILE
+
+CREATE OR REPLACE FUNCTION getaveragesoflasts(
+    starttime timestamp with time zone,
+    endtime timestamp with time zone,
+    psymbol character varying,
+    duration double precision)
+  RETURNS SETOF timevalue AS
+$BODY$
+	declare
+		numberOfSections double precision;
+		tas timevalue%rowtype;
+		localStart timeStamp with time zone;
+		localEnd timeStamp with time zone;
+		temptas timevalue;
+		oldtas double precision;
+	begin
+		numberOfSections := ceil((SELECT EXTRACT(EPOCH FROM (endTime - startTime))) / duration);
+		FOR i IN 1 .. numberOfSections LOOP
+			localStart := startTime + (duration * (i - 1) * interval '1 second');
+			localEnd := startTime + (duration * i * interval '1 second');
+			temptas := getaverageoflasts(localStart, localEnd, pSymbol);
+			IF temptas.average IS NOT NULL THEN
+				tas := temptas;
+				oldtas := tas.average;
+			ELSE
+				tas.start := localstart;
+				tas.average := oldtas;
+			END IF;
+			return next tas;
+		end loop;
+	return;
+	end
+	$BODY$
+  LANGUAGE plpgsql VOLATILE
