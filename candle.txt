@@ -1,0 +1,38 @@
+CREATE OR REPLACE FUNCTION getcandle(
+    starttime timestamp with time zone,
+    endtime timestamp with time zone,
+    psymbol character varying)
+  RETURNS candle AS
+$BODY$
+	select
+		startTime,
+		(select value as open FROM "4" WHERE datetime >= startTime and datetime <= endTime and symbol = pSymbol ORDER BY datetime ASC limit 1),
+		(select value as close FROM "4" WHERE datetime >= startTime and datetime <= endTime and symbol = pSymbol ORDER BY datetime DESC limit 1),
+		(select max(value) as high FROM "4" WHERE datetime >= startTime and datetime <= endTime and symbol = pSymbol),
+		(select min(value) as low FROM "4" WHERE datetime >= startTime and datetime <= endTime and symbol = pSymbol); $BODY$
+  LANGUAGE sql VOLATILE
+
+CREATE OR REPLACE FUNCTION getcandles(
+    starttime timestamp with time zone,
+    endtime timestamp with time zone,
+    psymbol character varying,
+    candlewidth integer)
+  RETURNS SETOF candle AS
+$BODY$
+	declare
+		numberOfCandles int;
+		candles candle%rowtype;
+		localStart timeStamp with time zone;
+		localEnd timeStamp with time zone;
+	begin
+		numberOfCandles := ceil((SELECT EXTRACT(EPOCH FROM (endTime - startTime))) / candleWidth);
+		FOR i IN 1 .. numberOfCandles LOOP
+			localStart := startTime + (candleWidth * (i - 1) * interval '1 second');
+			localEnd := startTime + (candleWidth * i * interval '1 second');
+			candles := getCandle(localStart, localEnd, pSymbol);
+			return next candles;
+		end loop;
+	return;
+	end
+	$BODY$
+  LANGUAGE plpgsql VOLATILE
