@@ -1,0 +1,65 @@
+CREATE OR REPLACE FUNCTION getcorrelationcoefficient(
+    psymbol1 character varying,
+    psymbol2 character varying,
+    pstarttime timestamp with time zone,
+    pendtime timestamp with time zone,
+    pduration integer)
+  RETURNS SETOF correlationcoefficient AS
+$BODY$
+	declare
+		firstmean double precision;
+		previousfirstmean double precision;
+		secondmean double precision;
+		previoussecondmean double precision;
+		comoment double precision;
+		covariance double precision;
+		firstm2 double precision;
+		secondm2 double precision;
+		firststandarddeviation double precision;
+		secondstandarddeviation double precision;
+		cc double precision;
+		ccs correlationcoefficient%rowtype;
+		rowdata RECORD;
+		count integer;
+	begin
+		firstmean := 0;
+		previousfirstmean := 0;
+		secondmean := 0;
+		previoussecondmean := 0;
+		comoment := 0;
+		covariance := 0;
+		firstm2 := 0;
+		secondm2 := 0;
+		firststandarddeviation := 0;
+		secondstandarddeviation := 0;
+		cc := 0;
+		count := 0;
+
+		FOR rowdata in execute 'select first.start as start, first.close as close1, second.close as close2 from getcandles($3, $4, $1, $5) AS first LEFT JOIN getcandles($3, $4, $2, $5) AS second on first.start = second.start' USING psymbol1, psymbol2, pstarttime, pendtime, pduration LOOP
+			raise notice '%, %, %', rowdata.start, rowdata.close1, rowdata.close2;
+			count := count + 1;
+			IF count = 1 THEN
+				firstmean = rowdata.close1;
+				secondmean = rowdata.close2;
+			END IF;
+			IF COUNT > 1  THEN
+				firstmean := firstmean + (rowdata.close1 - firstmean) / count;
+				secondmean := secondmean + (rowdata.close2 - secondmean) / count;
+				comoment := comoment + (rowdata.close1 - firstmean) * (rowdata.close2 - previoussecondmean);
+				covariance := comoment / count;
+				firstm2 := firstm2 + (rowdata.close1 - firstmean) * (rowdata.close1 - previousfirstmean);
+				secondm2 := secondm2 + (rowdata.close2 - secondmean ) * (rowdata.close2 - previoussecondmean);
+				firststandarddeviation := sqrt(firstm2 / count);
+				secondstandarddeviation := sqrt(secondm2 / count);
+				cc := covariance / firststandarddeviation / secondstandarddeviation;
+			END IF;
+			previousfirstmean := firstmean;
+			previoussecondmean := secondmean;
+			ccs.start = rowdata.start;
+			ccs.cc = cc;
+			return next ccs;
+		END LOOP;
+	return;
+	end;
+$BODY$
+  LANGUAGE plpgsql VOLATILE
