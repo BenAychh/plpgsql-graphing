@@ -1,0 +1,30 @@
+CREATE OR REPLACE FUNCTION getrateofchange(
+    starttime timestamp with time zone,
+    endtime timestamp with time zone,
+    psymbol character varying,
+    candlewidth integer)
+  RETURNS SETOF rateofchange AS
+$BODY$
+	declare
+		numberOfCandles int;
+		rocs rateofchange%rowtype;
+		localStart timeStamp with time zone;
+		localEnd timeStamp with time zone;
+		oldopen double precision;
+		oldclose double precision;
+		rowdata candle;
+
+	begin
+		numberOfCandles := ceil((SELECT EXTRACT(EPOCH FROM (endTime - startTime))) / candleWidth);
+		FOR i IN 1 .. numberOfCandles LOOP
+			localStart := startTime + (candleWidth * (i - 1) * interval '1 second');
+			localEnd := startTime + (candleWidth * i * interval '1 second');
+			execute 'select * from getCandle($1, $2, $3)' into rowdata USING localstart, localend, psymbol;
+			rocs.timeend := localEnd - interval '1 second';
+			rocs.rateofchange := rowdata.close - rowdata.open;
+			return next rocs;
+		end loop;
+	return;
+	end
+	$BODY$
+  LANGUAGE plpgsql VOLATILE
