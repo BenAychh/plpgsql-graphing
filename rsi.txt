@@ -1,0 +1,91 @@
+CREATE OR REPLACE FUNCTION getrsi(
+    psymbol character varying,
+    pstarttime timestamp with time zone,
+    pendtime timestamp with time zone,
+    pnumberofticks double precision,
+    pduration integer)
+  RETURNS SETOF rsi AS
+$BODY$
+	declare
+		previousvalue double precision;
+		smoothaverageofups double precision;
+		smoothaverageofdowns double precision;
+		smoothrsi double precision;
+		emaaverageofups double precision;
+		emaaverageofdowns double precision;
+		emarsi double precision;
+		alpha double precision;
+		count integer;
+		difference double precision;
+		rsis rsi%rowtype;
+		record candle;
+	begin
+		alpha := 2 / (pnumberofticks + 1);
+		count := 1;
+		smoothaverageofups := 0;
+		smoothaverageofdowns := 0;
+		FOR record in execute 'select * from getcandles($1, $2, $3, $4)' USING pstarttime, pendtime, psymbol, pduration LOOP
+			IF count >= 1 AND count <= pnumberofticks THEN
+				difference := record.close - record.open;
+				Raise Notice 'diff: %', difference;
+				IF difference > 0 THEN
+					smoothaverageofups := ((count - 1) * smoothaverageofups + difference) / (count);
+					smoothaverageofdowns := ((count - 1) * smoothaverageofdowns) / (count);
+					emaaverageofups := smoothaverageofups;
+					emaaverageofdowns := smoothaverageofdowns;
+				ELSE
+					smoothaverageofups := ((count - 1) * smoothaverageofups) / (count);
+					smoothaverageofdowns := ((count - 1) * smoothaverageofdowns + abs(difference)) / (count);
+					emaaverageofups := smoothaverageofups;
+					emaaverageofdowns := smoothaverageofdowns;
+				END IF;
+				Raise Notice 'ups: %', smoothaverageofups;
+				Raise Notice 'downs: %', smoothaverageofdowns;
+				IF smoothaverageofdowns <> 0 THEN
+					smoothrsi := 100 - (100 / (1 + smoothaverageofups / smoothaverageofdowns));
+					emarsi := smoothrsi;
+				ELSE
+					smoothrsi := 100;
+					emarsi := smoothrsi;
+				END IF;
+				rsis.datetime := record.start;
+				rsis.smoothrsi := smoothrsi;
+				rsis.emarsi := emarsi;
+				return next rsis;
+			ELSIF count > pnumberofticks THEN
+				IF record.close IS NOT NULL THEN
+					difference := record.close - record.open;
+					IF difference > 0 THEN
+						smoothaverageofups := ((pnumberofticks - 1) * smoothaverageofups + difference) / pnumberofticks;
+						smoothaverageofdowns := ((pnumberofticks - 1) * smoothaverageofdowns) / pnumberofticks;
+						emaaverageofups := (difference - emaaverageofups) * alpha + emaaverageofups;
+						emaaverageofdowns := (0 - emaaverageofdowns) * alpha + emaaverageofdowns;
+
+					ELSE
+						smoothaverageofdowns := ((pnumberofticks - 1) * smoothaverageofdowns + abs(difference)) / pnumberofticks;
+						smoothaverageofups := ((pnumberofticks - 1) * smoothaverageofups) / pnumberofticks;
+						emaaverageofdowns := (abs(difference) - emaaverageofdowns) * alpha + emaaverageofdowns;
+						emaaverageofups := (0 - emaaverageofups) * alpha + emaaverageofups;
+					END IF;
+					IF smoothaverageofdowns <> 0 THEN
+						smoothrsi := 100 - (100 / (1 + smoothaverageofups / smoothaverageofdowns));
+						emarsi := 100 - (100 / (1 + emaaverageofups / emaaverageofdowns));
+					ELSE
+						smoothrsi := 100;
+						emarsi := 100;
+					END IF;
+					rsis.datetime := record.start;
+					rsis.smoothrsi := smoothrsi;
+					rsis.emarsi := emarsi;
+					return next rsis;
+				END IF;
+			END IF;
+			count := count + 1;
+			IF record.close IS NOT NULL THEN
+				previousvalue := record.close;
+			END IF;
+		END LOOP;
+	return;
+	end;
+$BODY$
+  LANGUAGE plpgsql VOLATILE
